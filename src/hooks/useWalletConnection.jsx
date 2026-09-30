@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { BrowserProvider, JsonRpcSigner, formatEther } from "ethers";
+import { useState, useEffect, useCallback } from "react";
+import { BrowserProvider, formatEther } from "ethers";
 import { EIP6963AnnounceProvider, EIP6963RequestProvider } from "../constants";
 
 export const useWalletConnection = () => {
@@ -14,9 +14,11 @@ export const useWalletConnection = () => {
     async (accounts) => {
       if (accounts.length > 0) {
         const newAccount = accounts[0];
+
         setAccount(newAccount);
-        const signer = await browserProvider.getSigner(newAccount);
-        setSigner(signer);
+
+        const newSigner = await browserProvider.getSigner(newAccount);
+        setSigner(newSigner);
       } else {
         setAccount(null);
         setSigner(null);
@@ -30,8 +32,11 @@ export const useWalletConnection = () => {
     if (!browserProvider) {
       throw new Error("No wallet provider detected.");
     }
+
     const accounts = await browserProvider.send("eth_requestAccounts", []);
+
     await setAccountAndSigner(accounts);
+
     const network = await browserProvider.getNetwork();
     setChainId(Number(network.chainId));
   }, [browserProvider, setAccountAndSigner]);
@@ -58,7 +63,7 @@ export const useWalletConnection = () => {
     async (accounts) => {
       await setAccountAndSigner(accounts);
 
-      if (accounts.length == 0) {
+      if (accounts.length === 0) {
         setChainId(null);
         setBalance(null);
       }
@@ -68,33 +73,64 @@ export const useWalletConnection = () => {
 
   const handleChainChanged = useCallback((newChainId) => {
     setChainId(parseInt(newChainId, 16));
-
     setBalance(null);
   }, []);
 
   const handleDisconnect = useCallback(
     async (error) => {
-      console.error("Wallet disocnnected with error: ", error);
+      console.error("Wallet disconnected with error:", error);
       await disconnectWallet();
-      console.log("handle disconnect successful...");
     },
     [disconnectWallet],
   );
 
+  // Fetch the current wallet balance
   const getBalance = useCallback(async () => {
-    if (browserProvider && account) {
+    if (!browserProvider || !account) {
+      return;
+    }
+
+    try {
       const balance = await browserProvider.getBalance(account);
-      console.log("Balance: ", balance);
+
       setBalance(formatEther(balance));
+    } catch (error) {
+      console.error("Failed to fetch balance:", error);
     }
   }, [browserProvider, account]);
 
+  // Switch the connected wallet to another chain
+  const switchChain = useCallback(
+    async (targetChainId) => {
+      if (!browserProvider) {
+        throw new Error("No wallet provider detected.");
+      }
+
+      const chainIdHex = `0x${Number(targetChainId).toString(16)}`;
+
+      try {
+        await browserProvider.send("wallet_switchEthereumChain", [
+          {
+            chainId: chainIdHex,
+          },
+        ]);
+      } catch (error) {
+        console.error("Failed to switch chain:", error);
+        throw error;
+      }
+    },
+    [browserProvider],
+  );
+
+  // Initialize the wallet when the provider becomes available
   useEffect(() => {
     const init = async () => {
       const accounts = await browserProvider.send("eth_accounts", []);
-      if (accounts.length == 0) {
+
+      if (accounts.length === 0) {
         return;
       }
+
       await setAccountAndSigner(accounts);
 
       const network = await browserProvider.getNetwork();
@@ -102,13 +138,13 @@ export const useWalletConnection = () => {
     };
 
     if (!browserProvider) {
-      console.log("browserProvider is not set....");
       return;
     }
 
     init();
   }, [browserProvider, setAccountAndSigner]);
 
+  // Listen for wallet account/network changes
   useEffect(() => {
     if (!provider) {
       return;
@@ -125,13 +161,16 @@ export const useWalletConnection = () => {
     };
   }, [provider, handleAccountsChanged, handleChainChanged, handleDisconnect]);
 
+  // Fetch balance whenever account, provider, or network changes
   useEffect(() => {
-    if (!account || !browserProvider) {
+    if (!account || !browserProvider || !chainId) {
       return;
     }
-    getBalance();
-  }, [account, browserProvider, getBalance]);
 
+    getBalance();
+  }, [account, browserProvider, chainId, getBalance]);
+
+  // Detect MetaMask using EIP-6963
   useEffect(() => {
     const handleProviderAnnouncement = (event) => {
       if (event.detail.info.rdns === "io.metamask") {
@@ -167,5 +206,6 @@ export const useWalletConnection = () => {
     connectWallet,
     disconnectWallet,
     getBalance,
+    switchChain,
   };
 };
